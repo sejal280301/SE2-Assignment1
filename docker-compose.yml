@@ -1,0 +1,152 @@
+version: '3.1'
+
+services:
+
+  ebpf-exporter:
+    image: ebpf_exporter:latest
+
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /sys:/sys:ro
+      - /usr/src:/usr/src:ro
+      - ./exporters/ebpf_exporter/examples:/examples
+    privileged: true
+
+    command:
+      - '--config.dir=/examples'
+      - '--config.names=syscalls,cachestat,cgroup,biolatency,icmp-ip,llcstat,percpu-softirq'
+      - '--web.listen-address=0.0.0.0:9440'
+    restart: "no"
+     
+    # Expose this container's port 9440 on port 9440
+    ports:
+      - 9440:9440
+
+    # Assign a meaningful name to this service using 'container_name'
+    container_name: ebpf_container
+
+
+  node-exporter:
+    image: prom/node-exporter
+
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--web.listen-address=0.0.0.0:9441'
+      - --collector.filesystem.ignored-mount-points
+      - "^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)"
+
+    restart: "no"
+    cap_add:
+    - SYS_TIME
+
+    # Expose this container's port 9441 on port 9441
+    ports:
+      - 9441:9441
+
+    # Assign a meaningful name to this service using 'container_name'
+    container_name: node_container
+
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor
+
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      # Additionally mount these (same path inside the container) as read-only: /var/lib/docker, /dev/disk, /sys
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disks:/dev/disks:ro
+      - /sys:/sys:ro
+
+    devices:
+      - /dev/kmsg
+    command:
+      - '--port=9442'
+      - '-listen_ip=0.0.0.0'
+    environment:
+        - PORT=9442
+    privileged: true
+    restart: "no"
+
+    # Expose this container's port 9442 on port 9442
+    ports:
+      - 9442:9442
+
+    # Assign a meaningful name to this service using 'container_name'
+    container_name: cadvisor_container
+
+
+  grafana:
+    image: grafana/grafana-oss:9.4.7
+
+    volumes:
+      - ./grafana/data:/var/lib/grafana/
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+    env_file:
+      - ./grafana/config.monitoring
+
+    # Do not change this
+    # user: "${CURRENT_UID}"
+    user: "0"
+
+    restart: "unless-stopped"
+
+    # Ensure that this service start only after prometheus
+    depends_on:
+      - cadvisor
+      - node-exporter
+      - ebpf-exporter
+      - prometheus
+
+    # Expose this container's port 9091 on port 9091
+    ports:
+      - 9091:9091
+
+    # Assign a meaningful name to this service using 'container_name'
+    container_name: grafana_container
+
+    # Allow this container to use at most two cores
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+
+  prometheus:
+    image: prom/prometheus:v2.43.0
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+      - ./prometheus/storage/:/prometheus/
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+    # Do not change this
+    # user: "${CURRENT_UID}"
+    user: "0"
+    restart: "no"
+
+    # Ensure that this service start only after cadvisor, node-exporter, and ebpf-exporter
+    depends_on:
+      - cadvisor
+      - node-exporter
+      - ebpf-exporter
+
+    # Expose this container's port 9090 on port 9090
+    ports:
+      - 9090:9090
+
+    # Assign a meaningful name to this service using 'container_name'
+    container_name: promotheus_conatiner
+
+
